@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'sha256-ahzdmTxJmQW3b0iIJBxVg+iGp82X2EStAOUh9dO91U0='; style-src 'unsafe-inline'"
+    />
+    <title>Etsy Dashboard: connected</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 32rem;
+        margin: 3rem auto;
+        padding: 0 1rem;
+        color: #1f2328;
+        background: #fff;
+        line-height: 1.5;
+      }
+      code {
+        display: block;
+        word-break: break-all;
+        padding: 0.75rem;
+        background: #f3f4f6;
+        border-radius: 6px;
+        margin: 0.5rem 0;
+      }
+      button {
+        font: inherit;
+        padding: 0.5rem 1rem;
+      }
+      .error {
+        color: #b42318;
+      }
+    </style>
+  </head>
+  <body>
+    <h1 id="title">Etsy Dashboard</h1>
+    <p id="message">This page finishes connecting the Etsy Dashboard app to your Etsy shop.</p>
+    <div id="code-box" hidden>
+      <p>Copy this code and paste it into the app:</p>
+      <code id="code"></code>
+      <button id="copy" type="button">Copy code</button>
+      <span id="copied" hidden>Copied.</span>
+    </div>
+    <script>
+      (function () {
+        var params = new URLSearchParams(window.location.search);
+        var code = params.get('code');
+        var error = params.get('error');
+        var title = document.getElementById('title');
+        var message = document.getElementById('message');
+        if (error) {
+          title.textContent = 'Not connected';
+          message.className = 'error';
+          message.textContent =
+            'Etsy did not connect the app (' + error + '). Close this page and try Connect again.';
+          return;
+        }
+        if (!code) return;
+        title.textContent = 'Almost done';
+        message.textContent = 'Etsy approved the connection.';
+        document.getElementById('code').textContent = code;
+        document.getElementById('code-box').hidden = false;
+        document.getElementById('copy').addEventListener('click', function () {
+          navigator.clipboard.writeText(code).then(function () {
+            document.getElementById('copied').hidden = false;
+          });
+        });
+        // Keep the code out of the address bar and history once it's shown.
+        history.replaceState(null, '', window.location.pathname);
+      })();
+    </script>
+  </body>
+</html>
