@@ -1,76 +1,195 @@
 <!doctype html>
+<!--
+  Etsy sign-in callback (docs/etsy-api.md → Decisions 6; docs/PLAN.md → 11,
+  step 2). Etsy redirects here with ?code=…&state=… (or ?error=…). The page
+  hands both to the app through an etsydash:// link, and shows the code with
+  a Copy button in case the link doesn't open the app.
+
+  Published as-is from the public repo NicholasBrunet/etsy-dashboard-callback
+  (GitHub Pages). It holds no secret: a code is useless without the PKCE
+  verifier that only the running app has. It loads nothing: the CSP allows
+  only the inline script and style below, by hash, and no network at all.
+  Editing either one changes its hash; callback/index.test.ts recomputes
+  both and says what to put in the CSP.
+-->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="referrer" content="no-referrer" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'sha256-ahzdmTxJmQW3b0iIJBxVg+iGp82X2EStAOUh9dO91U0='; style-src 'unsafe-inline'"
+      content="default-src 'none'; script-src 'sha256-RINCgssXHijGMGSo76Jbe1+YgEzOmCHoeZZ0Ymr3iA4='; style-src 'sha256-9luHYCd3VIun0XqUJ9SxiTr2eFB3o56ankTkLC+r+80='; base-uri 'none'; form-action 'none'"
     />
-    <title>Etsy Dashboard: connected</title>
+    <meta name="referrer" content="no-referrer" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Etsy Sales Dashboard</title>
     <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #faf8f5;
+        --fg: #1f1d1a;
+        --muted: #5c5750;
+        --accent: #1d5e8c;
+        --accent-fg: #ffffff;
+        --line: #d9d3ca;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1b1a18;
+          --fg: #f2efea;
+          --muted: #b9b2a8;
+          --accent: #7cb8e4;
+          --accent-fg: #10202c;
+          --line: #45413b;
+        }
+      }
       body {
-        font-family: system-ui, sans-serif;
-        max-width: 32rem;
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          17px/1.5 system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 34rem;
         margin: 3rem auto;
         padding: 0 1rem;
-        color: #1f2328;
-        background: #fff;
-        line-height: 1.5;
       }
-      code {
-        display: block;
-        word-break: break-all;
-        padding: 0.75rem;
-        background: #f3f4f6;
+      h1 {
+        font-size: 1.4rem;
+      }
+      p {
+        color: var(--muted);
+      }
+      .open {
+        display: inline-block;
+        padding: 0.7rem 1.2rem;
+        border-radius: 8px;
+        background: var(--accent);
+        color: var(--accent-fg);
+        font-weight: 600;
+        text-decoration: none;
+      }
+      .code {
+        display: flex;
+        gap: 0.5rem;
+      }
+      .code input {
+        flex: 1;
+        min-width: 0;
+        padding: 0.5rem;
+        border: 1px solid var(--line);
         border-radius: 6px;
-        margin: 0.5rem 0;
+        background: transparent;
+        color: var(--fg);
+        font:
+          15px ui-monospace,
+          monospace;
       }
-      button {
-        font: inherit;
+      .code button {
         padding: 0.5rem 1rem;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: transparent;
+        color: var(--fg);
+        font: inherit;
+        cursor: pointer;
       }
-      .error {
-        color: #b42318;
+      [hidden] {
+        display: none !important;
       }
     </style>
   </head>
   <body>
-    <h1 id="title">Etsy Dashboard</h1>
-    <p id="message">This page finishes connecting the Etsy Dashboard app to your Etsy shop.</p>
-    <div id="code-box" hidden>
-      <p>Copy this code and paste it into the app:</p>
-      <code id="code"></code>
-      <button id="copy" type="button">Copy code</button>
-      <span id="copied" hidden>Copied.</span>
-    </div>
+    <main>
+      <h1 id="title">Etsy Sales Dashboard</h1>
+
+      <section id="signed-in" hidden>
+        <p>You’re signed in to Etsy. One more step to connect the dashboard:</p>
+        <p><a id="open" class="open">Open the dashboard</a></p>
+        <p>
+          If the dashboard doesn’t open, copy this code and paste it where the
+          dashboard asks for it:
+        </p>
+        <div class="code">
+          <input id="code" readonly aria-label="Sign-in code" />
+          <button id="copy" type="button">Copy</button>
+        </div>
+        <p id="copied" role="status"></p>
+        <p>The code works only once and only for a few minutes.</p>
+      </section>
+
+      <section id="failed" hidden>
+        <p>Etsy didn’t connect the dashboard.</p>
+        <p id="reason"></p>
+        <p>
+          Close this tab and choose “Connect to Etsy” in the dashboard again.
+        </p>
+      </section>
+
+      <section id="nothing" hidden>
+        <p>
+          This page finishes connecting the dashboard to Etsy. Start from
+          “Connect to Etsy” in the dashboard.
+        </p>
+      </section>
+    </main>
     <script>
       (function () {
+        'use strict';
         var params = new URLSearchParams(window.location.search);
-        var code = params.get('code');
-        var error = params.get('error');
-        var title = document.getElementById('title');
-        var message = document.getElementById('message');
+        var code = params.get('code') || '';
+        var state = params.get('state') || '';
+        var error = params.get('error') || '';
+        var MAX = 2048;
+        function show(id) {
+          document.getElementById(id).hidden = false;
+        }
+        // Everything from the URL goes in through textContent, value or an
+        // encoded URL, never as HTML.
         if (error) {
-          title.textContent = 'Not connected';
-          message.className = 'error';
-          message.textContent =
-            'Etsy did not connect the app (' + error + '). Close this page and try Connect again.';
+          var desc = params.get('error_description') || '';
+          document.getElementById('reason').textContent = (
+            'Etsy said: ' + (desc || error)
+          ).slice(0, 300);
+          show('failed');
           return;
         }
-        if (!code) return;
-        title.textContent = 'Almost done';
-        message.textContent = 'Etsy approved the connection.';
-        document.getElementById('code').textContent = code;
-        document.getElementById('code-box').hidden = false;
+        if (!code || code.length > MAX || state.length > MAX) {
+          show('nothing');
+          return;
+        }
+        var link = document.getElementById('open');
+        if (state) {
+          link.setAttribute(
+            'href',
+            'etsydash://connect?code=' +
+              encodeURIComponent(code) +
+              '&state=' +
+              encodeURIComponent(state),
+          );
+        } else {
+          // The app refuses a code without its state, so don't offer the link.
+          link.parentNode.hidden = true;
+        }
+        var input = document.getElementById('code');
+        input.value = code;
+        var status = document.getElementById('copied');
         document.getElementById('copy').addEventListener('click', function () {
-          navigator.clipboard.writeText(code).then(function () {
-            document.getElementById('copied').hidden = false;
-          });
+          input.select();
+          var done = function () {
+            status.textContent = 'Copied.';
+          };
+          var manual = function () {
+            status.textContent = 'Press Ctrl+C to copy the selected code.';
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(code).then(done, manual);
+          } else {
+            manual();
+          }
         });
-        // Keep the code out of the address bar and history once it's shown.
-        history.replaceState(null, '', window.location.pathname);
+        show('signed-in');
       })();
     </script>
   </body>
